@@ -5,16 +5,11 @@ Autonomous Systems Lab (ASL), Stanford University
 """
 
 import time
-
 from animations import animate_cartpole
-
 import jax
 import jax.numpy as jnp
-
 import matplotlib.pyplot as plt
-
 import numpy as np
-
 from scipy.integrate import odeint
 
 
@@ -39,7 +34,7 @@ def linearize(f, s, u):
     """
     # WRITE YOUR CODE BELOW ###################################################
     # INSTRUCTIONS: Use JAX to compute `A` and `B` in one line.
-    raise NotImplementedError()
+    A, B = jax.jacfwd(f, argnums=(0, 1))(s, u)
     ###########################################################################
     return A, B
 
@@ -112,7 +107,55 @@ def ilqr(f, s0, s_goal, N, Q, R, QN, eps=1e-3, max_iters=1000):
 
         # PART (c) ############################################################
         # INSTRUCTIONS: Update `Y`, `y`, `ds`, `du`, `s_bar`, and `u_bar`.
-        raise NotImplementedError()
+
+        # initialize cost-to-go
+        V = QN.copy()
+        v = QN @ (s_bar[N] - s_goal)
+
+        # backward pass
+        for k in range(N-1, -1, -1):
+            # vectors we defined
+            q_k = Q @ (s_bar[k] - s_goal)
+            r_k = R @ u_bar[k]
+
+            # Hessian
+            H_xx = Q + A[k].T @ V @ A[k]
+            H_uu = R + B[k].T @ V @ B[k]
+            H_xu = A[k].T @ V @ B[k]
+            H_ux = H_xu.T
+
+            # gradient
+            h_x = q_k   + A[k].T @ v
+            h_u = r_k   + B[k].T @ v
+
+            # compute feedback gains
+            Y[k] = -np.linalg.solve(H_uu, H_ux)
+            y[k] = -np.linalg.solve(H_uu, h_u)
+
+            # update cost-to-go
+            V = H_xx + H_xu @ Y[k]
+            v = h_x  + H_xu @ y[k]
+
+        # initialize state vector
+        s = np.zeros_like(s_bar)
+        s[0] = s_bar[0]
+
+        ds = np.zeros_like(s_bar)
+        du = np.zeros_like(u_bar)
+
+        # forward pass
+        for k in range(N):
+            # control correction
+            du[k] = Y[k] @ ds[k] + y[k]
+            u_bar[k] += du[k]
+
+            # step through dynamics
+            s[k+1] = f(s[k], u_bar[k])
+
+            # state deviation
+            ds[k+1] = s[k+1] - s_bar[k+1]
+
+        s_bar[:] = s
         #######################################################################
 
         if np.max(np.abs(du)) < eps:
@@ -155,7 +198,7 @@ s0 = np.array([0.0, 0.0, 0.0, 0.0])  # initial state
 s_goal = np.array([0.0, np.pi, 0.0, 0.0])  # goal state
 T = 10.0  # simulation time
 dt = 0.1  # sampling time
-animate = False  # flag for animation
+animate = True  # flag for animation
 closed_loop = False  # flag for closed-loop control
 
 # Initialize continuous-time and discretized dynamics
@@ -181,11 +224,12 @@ for k in range(N):
     # INSTRUCTIONS: Compute either the closed-loop or open-loop value of
     # `u[k]`, depending on the Boolean flag `closed_loop`.
     if closed_loop:
-        u[k] = 0.0
-        raise NotImplementedError()
-    else:  # do open-loop control
-        u[k] = 0.0
-        raise NotImplementedError()
+        # deviation
+        ds_k = s[k] - s_bar[k]
+        # add feedback terms (deviation + gain)
+        u[k] = u_bar[k] + Y[k] @ ds_k + y[k]
+    else: # open-loop
+        u[k] = u_bar[k]
     ###########################################################################
     s[k + 1] = odeint(lambda s, t: f(s, u[k]), s[k], t[k : k + 2])[1]
 print("done! ({:.2f} s)".format(time.time() - start), flush=True)
@@ -211,5 +255,5 @@ plt.show()
 
 if animate:
     fig, ani = animate_cartpole(t, s[:, 0], s[:, 1])
-    ani.save("cartpole_swingup.mp4", writer="ffmpeg")
+    #ani.save("cartpole_swingup.mp4", writer="ffmpeg")
     plt.show()
