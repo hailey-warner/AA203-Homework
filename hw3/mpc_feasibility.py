@@ -39,7 +39,20 @@ def do_mpc(
 
     cost = 0.0
     constraints = []
+    constraints += [x_cvx[0] == x0] # IC
 
+    for k in range(N):
+        constraints += [x_cvx[k + 1] == A @ x_cvx[k] + B @ u_cvx[k]] # dynamics
+        constraints += [cvx.norm_inf(x_cvx[k]) <= rx] # safety
+        constraints += [cvx.norm_inf(u_cvx[k]) <= ru] # safety
+        cost += cvx.quad_form(x_cvx[k], Q) + cvx.quad_form(u_cvx[k], R)
+
+    if rf == 0:
+        constraints += [x_cvx[N] == 0] # FC
+    else:
+        constraints += [cvx.norm_inf(x_cvx[N]) <= rx] # FC
+
+    cost += cvx.quad_form(x_cvx[N], P)
     # END PART (a) ############################################################
 
     prob = cvx.Problem(cvx.Minimize(cost), constraints)
@@ -77,7 +90,14 @@ def compute_roa(
             #               infeasible or the state has converged close enough
             #               to the origin. If the state converges, flag the
             #               corresponding entry of `roa` with a value of `1`.
-
+            for k in range(max_steps):
+                x, u, status = do_mpc(x, A, B, P, Q, R, N, rx, ru, rf)
+                if status == "infeasible":
+                    break
+                if np.linalg.norm(x, ord=np.inf) <= tol:
+                    roa[i, j] = 1.0
+                    break
+                x = A@x[0, :] + B@u[0, :] # apply first MPC control
             # END PART (b) ####################################################
     return roa
 
